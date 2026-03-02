@@ -36,11 +36,12 @@ import {
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
+// Menggunakan konfigurasi yang disediakan oleh lingkungan eksekusi
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'biolink-saas-v2';
 
 // --- Themes Definitions ---
 const THEMES = {
@@ -75,7 +76,7 @@ const DEFAULT_PROFILE = {
   bio: 'Tulis deskripsi singkat tentang diri Anda di sini.',
   photoURL: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&h=200&fit=crop',
   theme: 'modern',
-  customDomain: '', // Mockup for real SaaS domain
+  customDomain: '', 
   links: [
     { id: '1', title: 'Instagram', url: 'https://instagram.com', active: true },
     { id: '2', title: 'Twitter', url: 'https://twitter.com', active: true },
@@ -94,12 +95,13 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
 
-  // 1. Unified Initialization Logic
+  // 1. Inisialisasi Auth & Deteksi Profil Publik
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const profileId = params.get('id');
+    const initApp = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const profileId = params.get('id');
 
-    const initialize = async () => {
+      // Cek apakah ini kunjungan ke profil publik seseorang
       if (profileId) {
         try {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', profileId);
@@ -108,13 +110,14 @@ export default function App() {
             setPublicProfile(docSnap.data());
             setView('public');
             setLoading(false);
-            return;
+            return; 
           }
         } catch (err) {
-          console.error("Public Fetch Error", err);
+          console.error("Gagal memuat profil publik:", err);
         }
       }
 
+      // Prosedur Login (Rule 3)
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -122,23 +125,25 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth Error", err);
+        console.error("Auth Error:", err);
         setLoading(false);
       }
     };
 
-    initialize();
+    initApp();
 
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (view !== 'public') {
+      if (u) {
         setUser(u);
+      } else {
+        setLoading(false);
       }
     });
 
     return () => unsubscribe();
-  }, [view]);
+  }, []);
 
-  // 2. Dashboard Data Listener
+  // 2. Listener Data Firestore (Rule 1 & 2)
   useEffect(() => {
     if (!user || view === 'public') return;
 
@@ -154,7 +159,7 @@ export default function App() {
       setLoading(false);
       if (view === 'landing') setView('dashboard');
     }, (err) => {
-      console.error("Firestore Error", err);
+      console.error("Firestore Error:", err);
       setLoading(false);
     });
 
@@ -167,7 +172,7 @@ export default function App() {
     try {
       await setDoc(docRef, newData, { merge: true });
     } catch (error) {
-      console.error("Error saving profile:", error);
+      console.error("Gagal menyimpan:", error);
     }
   };
 
@@ -201,7 +206,6 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-
         const base64 = canvas.toDataURL('image/jpeg', 0.85);
         handleSave({ ...profileData, photoURL: base64 });
         setIsUploading(false);
@@ -212,25 +216,13 @@ export default function App() {
   };
 
   const copyToClipboard = () => {
-    // Check if user set a mockup custom domain
-    if (profileData?.customDomain) {
-      const el = document.createElement('textarea');
-      el.value = `${profileData.customDomain}/${user?.uid}`;
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-      setCopyStatus(true);
-      setTimeout(() => setCopyStatus(false), 2000);
-      return;
-    }
-
-    // Fallback: Clean current URL from blob: prefix
+    // Membersihkan URL dari prefix 'blob:' jika ada
     let baseUrl = window.location.href.split('?')[0].split('#')[0];
     if (baseUrl.startsWith('blob:')) {
       baseUrl = baseUrl.replace('blob:', '');
     }
     
+    // Format link menggunakan query parameter agar tidak 404
     const shareUrl = `${baseUrl}?id=${user?.uid}`;
     
     const el = document.createElement('textarea');
@@ -246,40 +238,33 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-950 text-white p-6 font-sans">
-        <div className="relative">
-          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-indigo-500 border-r-transparent"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Link2 className="w-5 h-5 text-indigo-500" />
-          </div>
-        </div>
-        <p className="text-zinc-400 animate-pulse text-xs mt-6 font-black tracking-[0.3em]">MENYIAPKAN SAAS...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-950 text-white p-6">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-indigo-500 mb-4"></div>
+        <p className="text-zinc-500 font-bold tracking-widest text-xs uppercase animate-pulse">Menghubungkan Server...</p>
       </div>
     );
   }
 
-  // View: PUBLIC PROFILE (Shared via URL)
+  // --- RENDERING VIEWS ---
+
   if (view === 'public' && publicProfile) {
     return <BioView data={publicProfile} isPublicView />;
   }
 
-  // View: PREVIEW MODE (Inside Dashboard)
   if (view === 'preview' && profileData) {
     return <BioView data={profileData} onBack={() => setView('dashboard')} />;
   }
 
-  // View: LANDING PAGE
-  if ((!user && view !== 'public') || view === 'landing') {
+  if (view === 'landing' || !user) {
     return <LandingPage onStart={() => setView('dashboard')} />;
   }
 
-  // View: DASHBOARD
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col md:flex-row font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      {/* Sidebar */}
+    <div className="min-h-screen bg-zinc-50 flex flex-col md:flex-row font-sans">
+      {/* Sidebar Navigation */}
       <aside className="w-full md:w-72 bg-white border-r border-zinc-200 p-8 flex flex-col">
         <div className="flex items-center gap-3 font-black text-2xl mb-12 text-zinc-900 tracking-tighter">
-          <div className="p-2 bg-indigo-600 rounded-lg shadow-lg shadow-indigo-100">
+          <div className="p-2 bg-indigo-600 rounded-lg">
             <Link2 className="w-6 h-6 text-white" />
           </div>
           <span>BioLink</span>
@@ -288,14 +273,14 @@ export default function App() {
         <nav className="space-y-3 flex-1">
           <button 
             onClick={() => setView('dashboard')}
-            className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition font-black text-sm ${view === 'dashboard' ? 'bg-zinc-950 text-white shadow-xl shadow-zinc-200' : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900'}`}
+            className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition font-black text-sm ${view === 'dashboard' ? 'bg-zinc-950 text-white shadow-xl' : 'text-zinc-500 hover:bg-zinc-50'}`}
           >
             <Layout className="w-5 h-5" />
             Dasbor Utama
           </button>
           <button 
              onClick={() => setView('preview')}
-             className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 transition font-black text-sm"
+             className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-zinc-500 hover:bg-zinc-50 transition font-black text-sm"
           >
             <Eye className="w-5 h-5" />
             Pratinjau Live
@@ -304,16 +289,16 @@ export default function App() {
 
         <div className="mt-auto pt-8 border-t border-zinc-100 space-y-6">
           <div className="flex items-center gap-4 px-2">
-            <div className="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center overflow-hidden border-2 border-zinc-50 shadow-inner">
+            <div className="w-12 h-12 rounded-2xl bg-zinc-100 overflow-hidden border-2 border-white shadow-sm flex items-center justify-center">
                {profileData?.photoURL ? <img src={profileData.photoURL} alt="p" className="w-full h-full object-cover" /> : <User className="w-6 h-6 text-zinc-300" />}
             </div>
             <div className="text-xs truncate flex-1">
-              <p className="font-black text-zinc-900 truncate uppercase tracking-tighter">{profileData?.displayName || 'Profil Baru'}</p>
-              <p className="text-zinc-400 font-bold">Lvl. Free User</p>
+              <p className="font-black text-zinc-900 truncate uppercase">{profileData?.displayName || 'User'}</p>
+              <p className="text-zinc-400 font-bold">Free Plan</p>
             </div>
           </div>
           <button 
-            onClick={() => signOut(auth).then(() => setView('landing'))}
+            onClick={() => signOut(auth).then(() => window.location.reload())}
             className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-red-500 hover:bg-red-50 transition text-sm font-black"
           >
             <LogOut className="w-5 h-5" />
@@ -322,231 +307,175 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-6 md:p-12 overflow-y-auto max-h-screen">
+      {/* Main Content Dashboard */}
+      <main className="flex-1 p-6 md:p-12 overflow-y-auto max-h-screen bg-zinc-50">
         <div className="max-w-5xl mx-auto">
+          {/* Warning for Blob URL */}
           {window.location.href.startsWith('blob:') && (
             <div className="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-4 shadow-sm">
-              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-black text-amber-900 mb-1 uppercase tracking-tight">Catatan Preview</p>
-                <p className="text-xs text-amber-700 font-medium leading-relaxed">
-                  Aplikasi sedang berjalan di URL sementara (`blob`). Link yang disalin mungkin tidak bisa dibuka langsung di tab baru karena batasan keamanan pratinjau. Gunakan fitur "Custom Domain" untuk mensimulasikan link asli.
-                </p>
+              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0" />
+              <div className="text-xs text-amber-800 font-medium">
+                <p className="font-bold mb-1">Peringatan Preview Browser</p>
+                Aplikasi berjalan di lingkungan simulasi. Untuk membagikan link ke orang lain, Anda harus menyalin link dari tombol di bawah. Link ini akan berisi parameter ID unik Anda.
               </div>
             </div>
           )}
 
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
             <div>
-              <h1 className="text-4xl font-black text-zinc-950 tracking-tighter leading-none mb-3">KUSTOMISASI BIO</h1>
-              <p className="text-zinc-500 font-bold text-sm uppercase tracking-widest">Atur link Anda dengan gaya profesional.</p>
+              <h1 className="text-4xl font-black text-zinc-950 tracking-tighter mb-2 uppercase">Editor Profil</h1>
+              <p className="text-zinc-500 font-bold text-sm tracking-wide">Kelola kehadiran digital Anda di satu tempat.</p>
             </div>
             <div className="flex flex-wrap gap-3">
               <button 
                 onClick={copyToClipboard}
-                className={`flex items-center gap-3 px-6 py-4 rounded-2xl transition text-sm font-black border-2 ${copyStatus ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-zinc-200 text-zinc-900 hover:border-zinc-300 shadow-lg shadow-zinc-200/50'}`}
+                className={`flex items-center gap-3 px-6 py-4 rounded-2xl transition text-sm font-black border-2 ${copyStatus ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-zinc-200 text-zinc-900 hover:border-zinc-300 shadow-lg shadow-zinc-200/20'}`}
               >
                 {copyStatus ? <CheckCircle2 className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
                 {copyStatus ? 'TERSALIN!' : 'SALIN LINK'}
               </button>
               <button 
                 onClick={() => setView('preview')}
-                className="flex items-center gap-3 px-6 py-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition text-sm font-black shadow-xl shadow-indigo-100"
+                className="flex items-center gap-3 px-6 py-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition text-sm font-black shadow-xl shadow-indigo-200"
               >
                 <Eye className="w-5 h-5" />
-                CEK LIVE
+                LIHAT LIVE
               </button>
             </div>
           </header>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-            <div className="lg:col-span-7 space-y-10">
-              {/* Profile Editor */}
-              <section className="bg-white p-10 rounded-3xl border border-zinc-100 shadow-xl shadow-zinc-100/50">
-                <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
-                  <div className="p-1.5 bg-indigo-100 rounded-lg"><User className="w-5 h-5 text-indigo-600" /></div>
-                  Identitas Visual
+            <div className="lg:col-span-7 space-y-8">
+              {/* Identity Section */}
+              <section className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
+                <h2 className="text-lg font-black mb-6 flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
+                  <User className="w-5 h-5 text-indigo-500" />
+                  Visual & Identitas
                 </h2>
-                
-                <div className="space-y-10">
-                   <div className="flex flex-col sm:flex-row items-center gap-10 p-8 bg-zinc-50 rounded-3xl border border-zinc-100">
-                      <div className="w-32 h-32 rounded-[2rem] bg-zinc-200 flex-shrink-0 relative group overflow-hidden border-4 border-white shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500">
-                        {profileData?.photoURL ? (
-                          <img src={profileData.photoURL} className="w-full h-full object-cover" alt="Profile" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-zinc-400">
-                            <ImageIcon className="w-12 h-12" />
-                          </div>
-                        )}
-                        {isUploading && (
-                          <div className="absolute inset-0 bg-zinc-900/60 flex items-center justify-center backdrop-blur-sm">
-                            <RefreshCw className="w-8 h-8 text-white animate-spin" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 w-full space-y-4">
-                        <div className="text-center sm:text-left">
-                          <p className="text-sm font-black text-zinc-900 mb-2 uppercase tracking-tighter">Avatar Profil</p>
-                          <p className="text-xs text-zinc-500 font-medium mb-6 leading-relaxed">Pilih foto terbaik Anda. Kami menyarankan rasio 1:1.</p>
-                          <div className="flex flex-wrap justify-center sm:justify-start gap-3">
-                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-                            <button 
-                              onClick={() => fileInputRef.current?.click()}
-                              className="px-6 py-3 bg-zinc-950 text-white rounded-xl hover:bg-zinc-800 transition text-xs font-black shadow-lg"
-                            >
-                              GANTI FOTO
-                            </button>
-                            <button 
-                              onClick={() => handleSave({ ...profileData, photoURL: '' })}
-                              className="px-6 py-3 bg-white border border-zinc-200 text-zinc-500 rounded-xl hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition text-xs font-black"
-                            >
-                              HAPUS
-                            </button>
-                          </div>
+                <div className="space-y-8">
+                  <div className="flex flex-col sm:flex-row items-center gap-8 p-6 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <div className="w-24 h-24 rounded-3xl bg-zinc-200 overflow-hidden border-4 border-white shadow-xl relative group">
+                      {profileData?.photoURL ? <img src={profileData.photoURL} className="w-full h-full object-cover" alt="p" /> : <div className="w-full h-full flex items-center justify-center text-zinc-400"><ImageIcon /></div>}
+                      {isUploading && (
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                          <RefreshCw className="w-6 h-6 text-white animate-spin" />
                         </div>
+                      )}
+                    </div>
+                    <div className="flex-1 space-y-4">
+                      <p className="text-xs font-bold text-zinc-500 uppercase">Foto Profil</p>
+                      <div className="flex gap-2">
+                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                        <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-zinc-950 text-white rounded-xl text-xs font-black shadow-md">UNGGAH</button>
+                        <button onClick={() => handleSave({...profileData, photoURL: ''})} className="px-4 py-2 bg-white border border-zinc-200 text-zinc-500 rounded-xl text-xs font-black">HAPUS</button>
                       </div>
-                   </div>
-
-                   <div className="space-y-6">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-3">Nama Lengkap</label>
-                          <input 
-                            type="text" 
-                            value={profileData?.displayName || ''}
-                            onChange={(e) => handleSave({ ...profileData, displayName: e.target.value })}
-                            className="w-full px-5 py-4 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 text-sm font-bold bg-zinc-50/50 transition-all"
-                            placeholder="Contoh: Budi Santoso"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-3">Situs Custom (Mockup)</label>
-                          <div className="relative">
-                            <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                            <input 
-                              type="text" 
-                              value={profileData?.customDomain || ''}
-                              onChange={(e) => handleSave({ ...profileData, customDomain: e.target.value })}
-                              className="w-full pl-11 pr-5 py-4 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 text-sm font-bold bg-zinc-50/50 transition-all"
-                              placeholder="biolink.me"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-3">Bio Singkat</label>
-                        <textarea 
-                          value={profileData?.bio || ''}
-                          rows={3}
-                          onChange={(e) => handleSave({ ...profileData, bio: e.target.value })}
-                          className="w-full px-5 py-4 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 text-sm font-bold bg-zinc-50/50 transition-all resize-none"
-                          placeholder="Ceritakan siapa Anda dalam 160 karakter..."
-                        />
-                      </div>
-                   </div>
+                    </div>
+                  </div>
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-[10px] font-black text-zinc-400 uppercase mb-2 tracking-widest">Nama Tampilan</label>
+                      <input 
+                        type="text" 
+                        value={profileData?.displayName || ''}
+                        onChange={(e) => handleSave({...profileData, displayName: e.target.value})}
+                        className="w-full px-4 py-3 border border-zinc-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 text-sm font-bold bg-zinc-50 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-zinc-400 uppercase mb-2 tracking-widest">Bio Singkat</label>
+                      <textarea 
+                        value={profileData?.bio || ''}
+                        onChange={(e) => handleSave({...profileData, bio: e.target.value})}
+                        className="w-full px-4 py-3 border border-zinc-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 text-sm font-bold bg-zinc-50 transition-all resize-none"
+                        rows={3}
+                      />
+                    </div>
+                  </div>
                 </div>
               </section>
 
-              {/* Theme Selector */}
-              <section className="bg-white p-10 rounded-3xl border border-zinc-100 shadow-xl shadow-zinc-100/50">
-                <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
-                  <div className="p-1.5 bg-indigo-100 rounded-lg"><Palette className="w-5 h-5 text-indigo-600" /></div>
+              {/* Theme Section */}
+              <section className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
+                <h2 className="text-lg font-black mb-6 flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
+                  <Palette className="w-5 h-5 text-indigo-500" />
                   Tema Visual
                 </h2>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   {Object.keys(THEMES).map((t) => (
                     <button
                       key={t}
-                      onClick={() => handleSave({ ...profileData, theme: t })}
-                      className={`group p-2 rounded-3xl border-2 transition-all duration-300 ${profileData?.theme === t ? 'border-indigo-600 scale-105 bg-indigo-50/30 shadow-lg shadow-indigo-100/50' : 'border-transparent hover:bg-zinc-50'}`}
+                      onClick={() => handleSave({...profileData, theme: t})}
+                      className={`p-2 rounded-2xl border-2 transition-all ${profileData?.theme === t ? 'border-indigo-600 bg-indigo-50 scale-105' : 'border-transparent hover:border-zinc-200'}`}
                     >
-                      <div className={`w-full h-20 rounded-2xl ${THEMES[t].bg} border border-white/10 flex flex-col items-center justify-center gap-2 shadow-inner overflow-hidden relative`}>
-                        <div className="w-10 h-2 bg-white/20 rounded-full"></div>
-                        <div className="w-6 h-2 bg-white/10 rounded-full"></div>
-                      </div>
-                      <p className="text-[10px] font-black capitalize text-center mt-3 text-zinc-500 group-hover:text-zinc-900 tracking-widest">{t}</p>
+                      <div className={`w-full h-12 rounded-xl ${THEMES[t].bg} mb-2 shadow-inner border border-white/10`}></div>
+                      <p className="text-[10px] font-black uppercase text-center text-zinc-500">{t}</p>
                     </button>
                   ))}
                 </div>
               </section>
 
-              {/* Links Editor */}
-              <section className="bg-white p-10 rounded-3xl border border-zinc-100 shadow-xl shadow-zinc-100/50">
+              {/* Links Section */}
+              <section className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
                 <div className="flex items-center justify-between mb-8">
-                  <h2 className="text-xl font-black flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
-                    <div className="p-1.5 bg-indigo-100 rounded-lg"><Link2 className="w-5 h-5 text-indigo-600" /></div>
-                    Tautan Aktif
+                  <h2 className="text-lg font-black flex items-center gap-3 text-zinc-900 uppercase tracking-tighter">
+                    <Link2 className="w-5 h-5 text-indigo-500" />
+                    Daftar Tautan
                   </h2>
                   <button 
-                    onClick={() => {
-                      const newLink = { id: Date.now().toString(), title: 'Link Baru', url: 'https://', active: true };
-                      handleSave({ ...profileData, links: [...(profileData?.links || []), newLink] });
-                    }}
-                    className="flex items-center gap-2 px-5 py-3 bg-zinc-950 text-white rounded-2xl hover:bg-zinc-800 transition text-xs font-black shadow-lg"
+                    onClick={() => handleSave({...profileData, links: [...(profileData?.links || []), {id: Date.now().toString(), title: 'Link Baru', url: 'https://', active: true}]})}
+                    className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition shadow-sm"
                   >
-                    <Plus className="w-4 h-4" />
-                    BUAT BARU
+                    <Plus className="w-5 h-5" />
                   </button>
                 </div>
-
-                <div className="space-y-6">
+                <div className="space-y-4">
                   {(profileData?.links || []).map((link, idx) => (
-                    <div key={link.id} className="p-6 border border-zinc-100 rounded-3xl bg-zinc-50/30 hover:bg-white hover:shadow-2xl hover:border-white transition-all duration-500 group relative">
-                      <div className="flex items-start gap-6">
-                        <div className="flex-1 space-y-5">
-                          <div>
-                            <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-2">Judul Link</label>
-                            <input 
-                              type="text" 
-                              value={link.title}
-                              placeholder="Judul Link"
-                              onChange={(e) => {
-                                const newLinks = [...profileData.links];
-                                newLinks[idx].title = e.target.value;
-                                handleSave({ ...profileData, links: newLinks });
-                              }}
-                              className="w-full bg-transparent font-black text-zinc-900 focus:outline-none text-lg tracking-tight"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-2">Destinasi URL</label>
-                            <input 
-                              type="text" 
-                              value={link.url}
-                              placeholder="https://..."
-                              onChange={(e) => {
-                                const newLinks = [...profileData.links];
-                                newLinks[idx].url = e.target.value;
-                                handleSave({ ...profileData, links: newLinks });
-                              }}
-                              className="w-full bg-transparent text-zinc-500 focus:outline-none text-xs font-bold"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-6">
-                           <button 
-                            onClick={() => {
-                              const newLinks = profileData.links.filter(l => l.id !== link.id);
-                              handleSave({ ...profileData, links: newLinks });
+                    <div key={link.id} className="p-5 border border-zinc-100 rounded-2xl bg-zinc-50 group hover:bg-white hover:border-zinc-200 transition-all">
+                      <div className="flex items-start gap-4">
+                        <div className="flex-1 space-y-4">
+                          <input 
+                            type="text" 
+                            value={link.title}
+                            onChange={(e) => {
+                              const newLinks = [...profileData.links];
+                              newLinks[idx].title = e.target.value;
+                              handleSave({...profileData, links: newLinks});
                             }}
-                            className="p-3 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                           >
-                             <Trash2 className="w-5 h-5" />
-                           </button>
-                           <label className="relative inline-flex items-center cursor-pointer">
-                              <input 
-                                type="checkbox" 
-                                checked={link.active} 
-                                onChange={(e) => {
-                                  const newLinks = [...profileData.links];
-                                  newLinks[idx].active = e.target.checked;
-                                  handleSave({ ...profileData, links: newLinks });
-                                }}
-                                className="sr-only peer" 
-                              />
-                              <div className="w-12 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-6 peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
-                           </label>
+                            className="w-full bg-transparent font-black text-zinc-800 focus:outline-none text-base"
+                            placeholder="Judul Link"
+                          />
+                          <input 
+                            type="text" 
+                            value={link.url}
+                            onChange={(e) => {
+                              const newLinks = [...profileData.links];
+                              newLinks[idx].url = e.target.value;
+                              handleSave({...profileData, links: newLinks});
+                            }}
+                            className="w-full bg-transparent text-zinc-400 focus:outline-none text-xs font-bold"
+                            placeholder="https://..."
+                          />
+                        </div>
+                        <div className="flex flex-col items-end gap-4">
+                          <button 
+                            onClick={() => handleSave({...profileData, links: profileData.links.filter(l => l.id !== link.id)})}
+                            className="p-2 text-zinc-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                             <input 
+                               type="checkbox" 
+                               checked={link.active} 
+                               onChange={(e) => {
+                                 const newLinks = [...profileData.links];
+                                 newLinks[idx].active = e.target.checked;
+                                 handleSave({...profileData, links: newLinks});
+                               }}
+                               className="sr-only peer" 
+                             />
+                             <div className="w-9 h-5 bg-zinc-200 rounded-full peer peer-checked:bg-emerald-500 peer-checked:after:translate-x-4 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                          </label>
                         </div>
                       </div>
                     </div>
@@ -555,20 +484,15 @@ export default function App() {
               </section>
             </div>
 
-            {/* Preview Device Side */}
+            {/* Desktop Side Preview */}
             <div className="lg:col-span-5 hidden lg:block sticky top-10">
-              <div className="w-[340px] h-[680px] mx-auto bg-zinc-950 rounded-[4rem] p-5 border-[12px] border-zinc-900 shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15)] relative overflow-hidden ring-1 ring-white/10">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-36 h-8 bg-zinc-900 rounded-b-[2rem] z-20 flex items-center justify-center">
-                  <div className="w-10 h-1 bg-zinc-800 rounded-full"></div>
-                </div>
-                <div className="w-full h-full bg-white rounded-[2.5rem] overflow-hidden">
+              <div className="w-[320px] h-[640px] mx-auto bg-zinc-950 rounded-[3rem] p-4 border-[10px] border-zinc-900 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-zinc-900 rounded-b-2xl z-20"></div>
+                <div className="w-full h-full bg-white rounded-[2rem] overflow-hidden">
                    {profileData && <BioView data={profileData} isPreview />}
                 </div>
               </div>
-              <div className="mt-8 text-center space-y-2">
-                <p className="text-[10px] font-black text-zinc-900 uppercase tracking-[0.4em]">LIVE SMARTPHONE VIEW</p>
-                <p className="text-[9px] text-zinc-400 font-bold">Semua perubahan disimpan otomatis ke Cloud.</p>
-              </div>
+              <p className="text-center mt-6 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Live Mobile View</p>
             </div>
           </div>
         </div>
@@ -583,15 +507,12 @@ function BioView({ data, isPreview = false, onBack, isPublicView = false }) {
   const theme = THEMES[data.theme] || THEMES.modern;
   
   return (
-    <div className={`min-h-full ${theme.bg} ${theme.text} p-8 flex flex-col items-center relative overflow-y-auto selection:bg-indigo-500/30 font-sans`}>
+    <div className={`min-h-full ${theme.bg} ${theme.text} p-8 flex flex-col items-center relative overflow-y-auto selection:bg-indigo-500/20 font-sans`}>
       {/* Navigation Layer */}
       {!isPreview && (
         <div className="absolute top-8 left-8 right-8 flex justify-between items-center z-50">
            {onBack ? (
-            <button 
-              onClick={onBack}
-              className="p-3 bg-white/10 rounded-2xl hover:bg-white/20 transition backdrop-blur-3xl border border-white/20 shadow-2xl"
-            >
+            <button onClick={onBack} className="p-3 bg-white/10 rounded-2xl hover:bg-white/20 transition backdrop-blur-xl border border-white/10">
               <ArrowLeft className="w-5 h-5" />
             </button>
            ) : <div />}
@@ -599,7 +520,7 @@ function BioView({ data, isPreview = false, onBack, isPublicView = false }) {
            {isPublicView && (
              <button 
               onClick={() => window.location.href = window.location.origin + window.location.pathname}
-              className="px-6 py-3 bg-white text-zinc-950 rounded-2xl hover:bg-zinc-100 transition shadow-2xl text-xs font-black uppercase tracking-tighter"
+              className="px-6 py-3 bg-white text-zinc-950 rounded-2xl hover:bg-zinc-100 transition shadow-xl text-[10px] font-black uppercase"
              >
                Buat Link Anda
              </button>
@@ -607,50 +528,40 @@ function BioView({ data, isPreview = false, onBack, isPublicView = false }) {
         </div>
       )}
 
-      <div className="w-full max-w-lg mx-auto py-20 flex flex-col items-center">
+      <div className="w-full max-w-lg mx-auto py-16 flex flex-col items-center">
         {/* Profile Info */}
         <div className="mb-12 text-center flex flex-col items-center w-full">
-          <div className="w-32 h-32 rounded-[2.5rem] border-4 border-white/30 mb-8 overflow-hidden shadow-2xl bg-zinc-800 transform rotate-3">
-            {data.photoURL ? (
-              <img src={data.photoURL} alt={data.displayName} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <User className="w-14 h-14 text-white/10" />
-              </div>
-            )}
+          <div className="w-28 h-28 rounded-[2.5rem] border-4 border-white/30 mb-8 overflow-hidden shadow-2xl bg-zinc-800 transform rotate-3">
+            {data.photoURL ? <img src={data.photoURL} alt="p" className="w-full h-full object-cover" /> : <User className="w-10 h-10 text-white/10" />}
           </div>
-          <h1 className="text-3xl font-black mb-4 tracking-tighter drop-shadow-2xl uppercase leading-none">{data.displayName || 'Unnamed'}</h1>
-          <p className="text-sm opacity-70 max-w-[320px] leading-relaxed font-bold tracking-tight">{data.bio}</p>
+          <h1 className="text-3xl font-black mb-4 tracking-tighter uppercase leading-none">{data.displayName || 'Unnamed'}</h1>
+          <p className="text-sm opacity-70 max-w-[280px] leading-relaxed font-bold tracking-tight">{data.bio}</p>
         </div>
 
         {/* Links List */}
-        <div className="w-full space-y-5">
+        <div className="w-full space-y-4">
           {(data.links || []).filter(l => l.active).map((link) => (
             <a
               key={link.id}
               href={link.url.startsWith('http') ? link.url : `https://${link.url}`}
               target="_blank"
               rel="noopener noreferrer"
-              className={`w-full p-5 rounded-2xl text-center font-black transition-all transform hover:scale-[1.04] active:scale-[0.96] flex items-center justify-between px-10 shadow-xl group border-2 border-transparent hover:border-white/20 ${theme.button}`}
+              className={`w-full p-5 rounded-2xl text-center font-black transition-all transform hover:scale-[1.03] flex items-center justify-between px-8 shadow-md border-2 border-transparent hover:border-white/10 ${theme.button}`}
             >
               <div className="w-5" /> 
-              <span className="flex-1 uppercase tracking-tighter text-sm">{link.title}</span>
-              <ExternalLink className="w-5 h-5 opacity-30 group-hover:opacity-100 transition-opacity" />
+              <span className="flex-1 uppercase text-sm tracking-tight">{link.title}</span>
+              <ExternalLink className="w-4 h-4 opacity-30" />
             </a>
           ))}
           {(!data.links || data.links.filter(l => l.active).length === 0) && (
-            <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem] bg-white/5 backdrop-blur-sm">
-               <p className="text-[10px] font-black opacity-30 uppercase tracking-[0.5em]">TIDAK ADA LINK AKTIF</p>
-            </div>
+            <p className="text-center text-[10px] font-black opacity-20 uppercase tracking-widest py-10">Belum ada link aktif</p>
           )}
         </div>
 
         {/* Footer Branding */}
-        <div className="mt-24 opacity-30 flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.4em] hover:opacity-100 transition-opacity cursor-default">
-           <div className="p-1 bg-white/10 rounded">
-             <Link2 className="w-3 h-3" />
-           </div>
-           <span>Powered by BioLink SaaS</span>
+        <div className="mt-20 opacity-30 flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.4em]">
+           <Link2 className="w-3 h-3" />
+           <span>BioLink SaaS</span>
         </div>
       </div>
     </div>
@@ -660,107 +571,32 @@ function BioView({ data, isPreview = false, onBack, isPublicView = false }) {
 // --- Component: LANDING PAGE ---
 function LandingPage({ onStart }) {
   return (
-    <div className="min-h-screen bg-zinc-950 text-white selection:bg-indigo-500 overflow-x-hidden font-sans">
-      <nav className="p-10 flex items-center justify-between max-w-7xl mx-auto relative z-20">
-        <div className="flex items-center gap-3 font-black text-3xl tracking-tighter">
-          <div className="p-2 bg-indigo-600 rounded-xl">
-            <Link2 className="w-7 h-7 text-white" />
-          </div>
-          <span>BioLink</span>
-        </div>
-        <button 
-          onClick={onStart}
-          className="px-10 py-4 bg-white text-zinc-950 rounded-2xl text-sm font-black hover:bg-zinc-100 transition shadow-2xl tracking-tighter uppercase"
-        >
-          Masuk Sekarang
-        </button>
-      </nav>
+    <div className="min-h-screen bg-zinc-950 text-white selection:bg-indigo-500 overflow-hidden font-sans flex flex-col items-center justify-center p-6 relative">
+      <div className="absolute top-20 left-1/4 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[150px] animate-pulse"></div>
+      <div className="absolute bottom-20 right-1/4 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[150px]"></div>
 
-      <main className="max-w-6xl mx-auto px-6 py-32 text-center relative">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full pointer-events-none overflow-hidden">
-           <div className="absolute top-20 left-1/4 w-[600px] h-[600px] bg-indigo-600/30 rounded-full blur-[180px] animate-pulse"></div>
-           <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[180px]"></div>
-        </div>
-
-        <div className="inline-flex items-center gap-3 px-5 py-2 bg-zinc-900/80 border border-white/10 rounded-full text-indigo-400 text-[10px] font-black uppercase tracking-[0.4em] mb-12 relative z-10 backdrop-blur-2xl shadow-2xl">
+      <div className="relative z-10 text-center space-y-12 max-w-4xl">
+        <div className="inline-flex items-center gap-3 px-5 py-2 bg-zinc-900 border border-white/10 rounded-full text-indigo-400 text-[10px] font-black uppercase tracking-[0.4em] shadow-2xl">
           <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
-          BIO-LINK SAAS REVOLUTION 2024
+          Bio-Link SaaS v2.0
         </div>
         
-        <h1 className="text-7xl md:text-9xl font-black mb-10 tracking-tighter leading-[0.85] relative z-10 uppercase">
+        <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-none uppercase">
           SATU LINK <br />
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-indigo-500 to-rose-400">BAGI SEMUA.</span>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-rose-400">BAGI SEMUA.</span>
         </h1>
         
-        <p className="text-zinc-500 text-xl md:text-2xl mb-16 max-w-3xl mx-auto leading-relaxed font-bold tracking-tight relative z-10">
-          Bangun profil personal yang ikonik dan bagikan seluruh konten digital Anda hanya dengan satu URL eksklusif.
+        <p className="text-zinc-500 text-lg md:text-xl font-bold tracking-tight max-w-2xl mx-auto">
+          Bangun kehadiran digital yang ikonik dan hubungkan audiens Anda ke seluruh dunia konten Anda hanya dengan satu URL.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-6 relative z-10">
-          <button 
-            onClick={onStart}
-            className="w-full sm:w-auto px-16 py-6 bg-indigo-600 text-white rounded-3xl text-2xl font-black hover:bg-indigo-700 transition shadow-[0_20px_50px_-10px_rgba(79,70,229,0.5)] active:scale-95 uppercase tracking-tighter"
-          >
-            Mulai Gratis — Selamanya
-          </button>
-        </div>
-
-        {/* Visual Mockup Container */}
-        <div className="mt-40 relative z-10 max-w-5xl mx-auto">
-          <div className="p-3 bg-gradient-to-b from-white/10 to-transparent rounded-[4rem] shadow-3xl ring-1 ring-white/10">
-            <div className="bg-zinc-900/80 rounded-[3.5rem] border border-white/5 backdrop-blur-3xl overflow-hidden p-12 md:p-24">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
-                 <div className="text-left space-y-10">
-                    <div className="space-y-6">
-                      <div className="w-16 h-16 bg-indigo-500/10 rounded-[1.5rem] flex items-center justify-center shadow-inner ring-1 ring-white/10">
-                        <Palette className="w-8 h-8 text-indigo-500" />
-                      </div>
-                      <h3 className="text-4xl font-black tracking-tighter uppercase leading-none">Desain Ikonik Tanpa Batas</h3>
-                      <p className="text-zinc-500 text-lg leading-relaxed font-bold tracking-tight">Pilih dari ribuan kombinasi warna dan tema premium. Buat profil Anda seunik kepribadian Anda sendiri.</p>
-                    </div>
-                    <ul className="space-y-5">
-                      {['Tema Premium Eksklusif', 'Unggah Avatar Langsung', 'Analitik Real-time'].map((item) => (
-                        <li key={item} className="flex items-center gap-4 text-sm font-black text-zinc-300 uppercase tracking-widest">
-                          <div className="p-1.5 bg-indigo-500/20 rounded-lg">
-                            <CheckCircle2 className="w-5 h-5 text-indigo-500" />
-                          </div>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                 </div>
-                 <div className="relative group">
-                    <div className="absolute inset-0 bg-indigo-500/30 blur-[100px] rounded-full scale-90 group-hover:scale-110 transition-transform duration-1000"></div>
-                    <div className="relative bg-zinc-800/60 rounded-[3rem] p-10 border border-white/10 shadow-3xl transform hover:-rotate-3 transition-transform duration-700 backdrop-blur-2xl">
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-5">
-                            <div className="w-16 h-16 bg-zinc-700 rounded-2xl animate-pulse"></div>
-                            <div className="space-y-3">
-                              <div className="w-40 h-3.5 bg-zinc-700 rounded-full"></div>
-                              <div className="w-24 h-2.5 bg-zinc-700/50 rounded-full"></div>
-                            </div>
-                          </div>
-                          <div className="space-y-3 pt-6">
-                            <div className="w-full h-12 bg-indigo-600/40 border border-indigo-500/30 rounded-2xl"></div>
-                            <div className="w-full h-12 bg-white/5 rounded-2xl"></div>
-                            <div className="w-full h-12 bg-white/5 rounded-2xl"></div>
-                          </div>
-                        </div>
-                    </div>
-                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      <footer className="border-t border-white/5 py-24 px-10 mt-20 text-center">
-        <div className="flex items-center justify-center gap-3 font-black text-2xl text-zinc-600 mb-8 tracking-tighter">
-           <Link2 className="w-6 h-6" />
-           <span>BioLink SaaS</span>
-        </div>
-        <p className="text-zinc-800 text-[10px] font-black uppercase tracking-[0.6em]">© 2024 BIOLINK SAAS PLATFORM. DIBUAT UNTUK KREATOR.</p>
-      </footer>
+        <button 
+          onClick={onStart}
+          className="px-16 py-6 bg-indigo-600 text-white rounded-[2rem] text-2xl font-black hover:bg-indigo-700 transition shadow-2xl shadow-indigo-500/30 active:scale-95 uppercase tracking-tighter"
+        >
+          Mulai Sekarang — Gratis
+        </button>
+      </div>
     </div>
   );
 }
